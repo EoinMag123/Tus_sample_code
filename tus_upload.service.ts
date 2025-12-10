@@ -1,6 +1,6 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, Subject, from, of, EMPTY } from 'rxjs';
+import { Observable, Subject, from, of } from 'rxjs';
 import {
   mergeMap,
   scan,
@@ -23,6 +23,12 @@ export interface FileUploadProgress {
   error?: string;
 }
 
+export interface StoredFile {
+  file: File;
+  questionName: string;  // SurveyJS question name
+  previewUrl?: string;   // For showing preview in survey
+}
+
 export interface UploadResult {
   applicationId: string;
   successful: FileUploadProgress[];
@@ -33,18 +39,32 @@ export interface UploadResult {
 @Injectable({
   providedIn: 'root'
 })
-export class TusUploadService {
-  // Signals for reactive UI updates
+export class SurveyTusUploadService {
+  private http = inject(HttpClient);
+
+  // Store files collected from SurveyJS (not uploaded yet)
+  private _storedFiles = signal<StoredFile[]>([]);
+  
+  // Upload progress signals
   private _fileProgress = signal<Map<string, FileUploadProgress>>(new Map());
   private _isUploading = signal<boolean>(false);
   private _currentApplicationId = signal<string | null>(null);
 
   // Public readonly signals
+  readonly storedFiles = this._storedFiles.asReadonly();
   readonly fileProgress = this._fileProgress.asReadonly();
   readonly isUploading = this._isUploading.asReadonly();
   readonly currentApplicationId = this._currentApplicationId.asReadonly();
 
-  // Computed signal for overall progress
+  // Computed: total stored file size
+  readonly totalStoredSize = computed(() => {
+    return this._storedFiles().reduce((sum, sf) => sum + sf.file.size, 0);
+  });
+
+  // Computed: total stored file count
+  readonly totalStoredCount = computed(() => this._storedFiles().length);
+
+  // Computed: overall upload progress
   readonly totalProgress = computed(() => {
     const progressMap = this._fileProgress();
     if (progressMap.size === 0) return 0;
@@ -60,7 +80,7 @@ export class TusUploadService {
     return totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
   });
 
-  // Computed signal for upload summary
+  // Computed: upload summary
   readonly uploadSummary = computed(() => {
     const progressMap = this._fileProgress();
     const files = Array.from(progressMap.values());
@@ -75,18 +95,108 @@ export class TusUploadService {
 
   private cancelSubject = new Subject<void>();
   private activeUploads: Map<string, tus.Upload> = new Map();
-
-  // TUS endpoint - adjust based on your BFF URL
   private readonly tusEndpoint = `${environment.bffApiUrl}/api/tus`;
 
-  constructor(private http: HttpClient) {}
+  /**
+   * Called by SurveyJS onUploadFiles callback
+   * Stores files locally instead of uploading immediately
+   * Returns fake URLs so SurveyJS shows the files as "uploaded"
+   */
+  storeFilesFromSurvey(
+    questionName: string,
+    files: File[],
+    callback: (status: string, data: any) => void
+  ): void {
+    const newStoredFiles: StoredFile[] = [];
+    const fakeUploadedFiles: any[] = [];
+
+    files.forEach((file, index) => {
+      // Create a local object URL for preview
+      const previewUrl = URL.createObjectURL(file);
+      
+      newStoredFiles.push({
+        file,
+        questionName,
+        previewUrl
+      });
+
+      // Return fake "uploaded" file info to SurveyJS
+      // This makes SurveyJS think the file is uploaded and shows it in the UI
+      fakeUploadedFiles.push({
+        file: file,
+        content: previewUrl  // SurveyJS uses this for preview
+      });
+    });
+
+    // Add to stored files
+    this._storedFiles.update(current => [...current, ...newStoredFiles]);
+
+    // Tell SurveyJS the "upload" succeeded
+    callback('success', fakeUploadedFiles);
+  }
 
   /**
-   * Main method to process all document uploads for an application
-   * This does NOT block the UI - progress is tracked via signals
+   * Called by SurveyJS onClearFiles callback
+   * Removes files from local storage
    */
-  processDocuments(files: File[], applicationId: string): Observable<UploadResult> {
-    if (!files || files.length === 0) {
+  removeStoredFile(questionName: string, fileName: string, callback: (status: string, data: any) => void): void {
+    this._storedFiles.update(current => {
+      const fileToRemove = current.find(
+        sf => sf.questionName === questionName && sf.file.name === fileName
+      );
+      
+      // Revoke the object URL to free memory
+      if (fileToRemove?.previewUrl) {
+        URL.revokeObjectURL(fileToRemove.previewUrl);
+      }
+
+      return current.filter(
+        sf => !(sf.questionName === questionName && sf.file.name === fileName)
+      );
+    });
+
+    callback('success', null);
+  }
+
+  /**
+   * Clear all stored files for a specific question
+   */
+  clearQuestionFiles(questionName: string): void {
+    this._storedFiles.update(current => {
+      // Revoke URLs for files being removed
+      current
+        .filter(sf => sf.questionName === questionName)
+        .forEach(sf => {
+          if (sf.previewUrl) URL.revokeObjectURL(sf.previewUrl);
+        });
+
+      return current.filter(sf => sf.questionName !== questionName);
+    });
+  }
+
+  /**
+   * Get all stored files (for submission)
+   */
+  getAllStoredFiles(): File[] {
+    return this._storedFiles().map(sf => sf.file);
+  }
+
+  /**
+   * Get stored files for a specific question
+   */
+  getFilesForQuestion(questionName: string): File[] {
+    return this._storedFiles()
+      .filter(sf => sf.questionName === questionName)
+      .map(sf => sf.file);
+  }
+
+  /**
+   * Main upload method - call this after survey is complete and you have an Application ID
+   */
+  uploadAllStoredFiles(applicationId: string): Observable<UploadResult> {
+    const files = this.getAllStoredFiles();
+    
+    if (files.length === 0) {
       return of({
         applicationId,
         successful: [],
@@ -95,7 +205,7 @@ export class TusUploadService {
       });
     }
 
-    // Reset state
+    // Reset upload state
     this._isUploading.set(true);
     this._currentApplicationId.set(applicationId);
     this._fileProgress.set(new Map());
@@ -115,7 +225,7 @@ export class TusUploadService {
     });
     this._fileProgress.set(initialProgress);
 
-    // Create indexed file array for tracking
+    // Create indexed file array
     const indexedFiles = files.map((file, index) => ({
       file,
       key: `${file.name}-${index}`,
@@ -123,30 +233,24 @@ export class TusUploadService {
     }));
 
     return from(indexedFiles).pipe(
-      // Process up to 4 files concurrently
       mergeMap(
         ({ file, key, index }) => this.createTusUploadObservable(file, key, applicationId, index),
-        4 // Concurrency limit
+        4 // Concurrent upload limit
       ),
-      // Aggregate progress updates
       scan((acc, progress) => {
         const newMap = new Map(acc);
         newMap.set(progress.fileName, progress);
         return newMap;
       }, new Map<string, FileUploadProgress>()),
-      // Update the signal with each progress update
       tap((progressMap) => {
         this._fileProgress.set(progressMap);
       }),
-      // Wait for all uploads to complete
       last(),
-      // Notify backend that all uploads are complete
       switchMap((finalProgressMap) => {
         const results = Array.from(finalProgressMap.values());
         const successful = results.filter(r => r.status === 'complete');
         const failed = results.filter(r => r.status === 'error');
 
-        // Only notify completion if at least some uploads succeeded
         if (successful.length > 0) {
           return this.notifyUploadsComplete(applicationId, successful.length, failed.length).pipe(
             switchMap(() => of({
@@ -157,26 +261,18 @@ export class TusUploadService {
             })),
             catchError((error) => {
               console.error('Failed to notify upload completion:', error);
-              return of({
-                applicationId,
-                successful,
-                failed,
-                allSuccessful: false
-              });
+              return of({ applicationId, successful, failed, allSuccessful: false });
             })
           );
         }
 
-        return of({
-          applicationId,
-          successful,
-          failed,
-          allSuccessful: false
-        });
+        return of({ applicationId, successful, failed, allSuccessful: false });
       }),
       takeUntil(this.cancelSubject),
       finalize(() => {
         this._isUploading.set(false);
+        // Clear stored files after upload attempt
+        this.clearAllStoredFiles();
       }),
       catchError((error) => {
         console.error('Upload process error:', error);
@@ -192,7 +288,7 @@ export class TusUploadService {
   }
 
   /**
-   * Creates an Observable wrapper around tus-js-client for a single file
+   * Creates TUS upload observable for a single file
    */
   private createTusUploadObservable(
     file: File,
@@ -203,8 +299,8 @@ export class TusUploadService {
     return new Observable<FileUploadProgress>((observer) => {
       const upload = new tus.Upload(file, {
         endpoint: this.tusEndpoint,
-        retryDelays: [0, 1000, 3000, 5000, 10000], // Retry with backoff
-        chunkSize: 5 * 1024 * 1024, // 5MB chunks - adjust as needed
+        retryDelays: [0, 1000, 3000, 5000, 10000],
+        chunkSize: 5 * 1024 * 1024, // 5MB chunks
         metadata: {
           filename: file.name,
           filetype: file.type || 'application/octet-stream',
@@ -212,69 +308,52 @@ export class TusUploadService {
           fileIndex: fileIndex.toString(),
           fileKey: fileKey
         },
-        // Important: Include credentials if your BFF requires auth
-        headers: {
-          // Add any auth headers your BFF needs
-          // 'Authorization': `Bearer ${this.getAuthToken()}`
-        },
         onError: (error) => {
           console.error(`Upload error for ${file.name}:`, error);
-          const errorProgress: FileUploadProgress = {
+          observer.next({
             fileName: fileKey,
             bytesUploaded: 0,
             bytesTotal: file.size,
             percentage: 0,
             status: 'error',
             error: error.message || 'Upload failed'
-          };
-          observer.next(errorProgress);
+          });
           observer.complete();
           this.activeUploads.delete(fileKey);
         },
         onProgress: (bytesUploaded, bytesTotal) => {
-          const progress: FileUploadProgress = {
+          observer.next({
             fileName: fileKey,
             bytesUploaded,
             bytesTotal,
             percentage: Math.round((bytesUploaded / bytesTotal) * 100),
             status: 'uploading'
-          };
-          observer.next(progress);
+          });
         },
         onSuccess: () => {
-          const completeProgress: FileUploadProgress = {
+          observer.next({
             fileName: fileKey,
             bytesUploaded: file.size,
             bytesTotal: file.size,
             percentage: 100,
             status: 'complete'
-          };
-          observer.next(completeProgress);
+          });
           observer.complete();
           this.activeUploads.delete(fileKey);
-        },
-        onBeforeRequest: (req) => {
-          // You can modify the request here if needed
-          // For example, add custom headers
         }
       });
 
-      // Store reference for potential cancellation
       this.activeUploads.set(fileKey, upload);
 
-      // Check for previous uploads (resumability)
       upload.findPreviousUploads().then((previousUploads) => {
         if (previousUploads.length > 0) {
-          // Resume from the most recent upload
           upload.resumeFromPreviousUpload(previousUploads[0]);
         }
         upload.start();
       }).catch(() => {
-        // If we can't check for previous uploads, just start fresh
         upload.start();
       });
 
-      // Cleanup on unsubscribe
       return () => {
         if (this.activeUploads.has(fileKey)) {
           upload.abort();
@@ -285,7 +364,7 @@ export class TusUploadService {
   }
 
   /**
-   * Notify the BFF that all uploads for an application are complete
+   * Notify backend that uploads are complete
    */
   private notifyUploadsComplete(
     applicationId: string,
@@ -294,11 +373,7 @@ export class TusUploadService {
   ): Observable<void> {
     return this.http.post<void>(
       `${environment.bffApiUrl}/api/applications/${applicationId}/documents-complete`,
-      {
-        successCount,
-        failedCount,
-        completedAt: new Date().toISOString()
-      }
+      { successCount, failedCount, completedAt: new Date().toISOString() }
     );
   }
 
@@ -307,41 +382,28 @@ export class TusUploadService {
    */
   cancelAllUploads(): void {
     this.cancelSubject.next();
-    this.activeUploads.forEach((upload, key) => {
-      upload.abort();
-    });
+    this.activeUploads.forEach((upload) => upload.abort());
     this.activeUploads.clear();
     this._isUploading.set(false);
   }
 
   /**
-   * Cancel a specific file upload
+   * Clear all stored files (call on form reset)
    */
-  cancelUpload(fileKey: string): void {
-    const upload = this.activeUploads.get(fileKey);
-    if (upload) {
-      upload.abort();
-      this.activeUploads.delete(fileKey);
-
-      // Update progress to show cancelled
-      const currentProgress = new Map(this._fileProgress());
-      const fileProgress = currentProgress.get(fileKey);
-      if (fileProgress) {
-        currentProgress.set(fileKey, {
-          ...fileProgress,
-          status: 'error',
-          error: 'Cancelled by user'
-        });
-        this._fileProgress.set(currentProgress);
-      }
-    }
+  clearAllStoredFiles(): void {
+    // Revoke all object URLs
+    this._storedFiles().forEach(sf => {
+      if (sf.previewUrl) URL.revokeObjectURL(sf.previewUrl);
+    });
+    this._storedFiles.set([]);
   }
 
   /**
-   * Reset the service state
+   * Full reset
    */
   reset(): void {
     this.cancelAllUploads();
+    this.clearAllStoredFiles();
     this._fileProgress.set(new Map());
     this._currentApplicationId.set(null);
   }
