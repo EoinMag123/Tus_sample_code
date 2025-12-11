@@ -407,4 +407,125 @@ export class SurveyTusUploadService {
     this._fileProgress.set(new Map());
     this._currentApplicationId.set(null);
   }
+
+
+
+  /**
+ * Called by SurveyJS onUploadFiles - now uploads immediately
+ */
+uploadFilesFromSurvey(
+  batchId: string,
+  questionName: string,
+  files: File[],
+  callback: (status: string, data: any) => void
+): void {
+  const fakeUploadedFiles: any[] = [];
+
+  files.forEach((file, index) => {
+    const fileKey = `${questionName}-${file.name}-${index}`;
+    const previewUrl = URL.createObjectURL(file);
+
+    // Track this file
+    this._storedFiles.update(current => [...current, {
+      file,
+      questionName,
+      previewUrl
+    }]);
+
+    // Initialize progress for this file
+    this._fileProgress.update(current => {
+      const newMap = new Map(current);
+      newMap.set(fileKey, {
+        fileName: file.name,
+        bytesUploaded: 0,
+        bytesTotal: file.size,
+        percentage: 0,
+        status: 'uploading'
+      });
+      return newMap;
+    });
+
+    // Start upload immediately with batchId (not applicationId)
+    this.uploadSingleFile(file, fileKey, batchId, index);
+
+    // Return fake "uploaded" to SurveyJS so it shows the file
+    fakeUploadedFiles.push({
+      file: file,
+      content: previewUrl
+    });
+  });
+
+  // Tell SurveyJS files are "uploaded" (they're uploading in background)
+  callback('success', fakeUploadedFiles);
+}
+
+/**
+ * Upload a single file immediately using TUS
+ */
+private uploadSingleFile(
+  file: File,
+  fileKey: string,
+  batchId: string,
+  fileIndex: number
+): void {
+  const upload = new tus.Upload(file, {
+    endpoint: this.tusEndpoint,
+    retryDelays: [0, 1000, 3000, 5000, 10000],
+    chunkSize: 5 * 1024 * 1024,
+    metadata: {
+      filename: file.name,
+      filetype: file.type || 'application/octet-stream',
+      batchId: batchId,  // Using batchId instead of applicationId
+      fileIndex: fileIndex.toString(),
+      fileKey: fileKey
+    },
+    onError: (error) => {
+      console.error(`Upload error for ${file.name}:`, error);
+      this._fileProgress.update(current => {
+        const newMap = new Map(current);
+        newMap.set(fileKey, {
+          fileName: file.name,
+          bytesUploaded: 0,
+          bytesTotal: file.size,
+          percentage: 0,
+          status: 'error',
+          error: error.message || 'Upload failed'
+        });
+        return newMap;
+      });
+      this.activeUploads.delete(fileKey);
+    },
+    onProgress: (bytesUploaded, bytesTotal) => {
+      this._fileProgress.update(current => {
+        const newMap = new Map(current);
+        newMap.set(fileKey, {
+          fileName: file.name,
+          bytesUploaded,
+          bytesTotal,
+          percentage: Math.round((bytesUploaded / bytesTotal) * 100),
+          status: 'uploading'
+        });
+        return newMap;
+      });
+    },
+    onSuccess: () => {
+      console.log(`Upload complete for ${file.name}`);
+      this._fileProgress.update(current => {
+        const newMap = new Map(current);
+        newMap.set(fileKey, {
+          fileName: file.name,
+          bytesUploaded: file.size,
+          bytesTotal: file.size,
+          percentage: 100,
+          status: 'complete'
+        });
+        return newMap;
+      });
+      this.activeUploads.delete(fileKey);
+    }
+  });
+
+  this.activeUploads.set(fileKey, upload);
+  upload.start();
+}
 }
