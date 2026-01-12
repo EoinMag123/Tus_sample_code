@@ -418,3 +418,84 @@ describe('hasActiveUploads', () => {
     expect(result).toBeFalse();
   });
 });
+
+
+
+======
+
+
+import { fakeAsync, tick } from '@angular/core/testing';
+
+describe('waitForUploadsToComplete with fakeAsync', () => {
+  it('should return immediately when no active uploads', fakeAsync(() => {
+    // Arrange
+    (service as any).activeUploads.clear();
+    let completed = false;
+
+    // Act
+    service.waitForUploadsToComplete().subscribe({
+      next: () => {
+        completed = true;
+      }
+    });
+
+    tick();
+
+    // Assert
+    expect(completed).toBeTrue();
+  }));
+
+  it('should wait for interval when uploads are active', fakeAsync(() => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-test.txt-0', mockUpload);
+    let completed = false;
+
+    // Act
+    service.waitForUploadsToComplete().subscribe({
+      next: () => {
+        completed = true;
+      }
+    });
+
+    // Should not complete yet
+    tick(400);
+    expect(completed).toBeFalse();
+
+    // Clear uploads
+    (service as any).activeUploads.clear();
+
+    // Tick past the interval
+    tick(500);
+    expect(completed).toBeTrue();
+  }));
+
+  it('should poll multiple times until uploads complete', fakeAsync(() => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('file1', mockUpload);
+    let completed = false;
+
+    // Act
+    service.waitForUploadsToComplete().subscribe({
+      next: () => {
+        completed = true;
+      }
+    });
+
+    // First interval - still has uploads
+    tick(500);
+    expect(completed).toBeFalse();
+
+    // Second interval - still has uploads
+    tick(500);
+    expect(completed).toBeFalse();
+
+    // Clear uploads
+    (service as any).activeUploads.clear();
+
+    // Third interval - should complete
+    tick(500);
+    expect(completed).toBeTrue();
+  }));
+});
