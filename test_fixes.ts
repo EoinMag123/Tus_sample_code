@@ -1,245 +1,77 @@
-// Add these PUBLIC methods to your service
-
-handleUploadError(fileKey: string, fileName: string, fileSize: number, error: any): void {
-  console.error(`Upload error for ${fileName}:`, error);
-  this._fileProgress.update(current => {
-    const newMap = new Map(current);
-    newMap.set(fileKey, {
-      fileName: fileName,
-      bytesUploaded: 0,
-      bytesTotal: fileSize,
-      percentage: 0,
-      status: 'error',
-      error: error?.message || 'Upload failed'
-    });
-    return newMap;
-  });
-  this.activeUploads.delete(fileKey);
-}
-
-handleUploadProgress(fileKey: string, fileName: string, bytesUploaded: number, bytesTotal: number): void {
-  this._fileProgress.update(current => {
-    const newMap = new Map(current);
-    newMap.set(fileKey, {
-      fileName: fileName,
-      bytesUploaded,
-      bytesTotal,
-      percentage: Math.round((bytesUploaded / bytesTotal) * 100),
-      status: 'uploading'
-    });
-    return newMap;
-  });
-}
-
-handleUploadSuccess(fileKey: string, fileName: string, fileSize: number): void {
-  console.log(`Upload complete for ${fileName}`);
-  this._fileProgress.update(current => {
-    const newMap = new Map(current);
-    newMap.set(fileKey, {
-      fileName: fileName,
-      bytesUploaded: fileSize,
-      bytesTotal: fileSize,
-      percentage: 100,
-      status: 'complete'
-    });
-    return newMap;
-  });
-  this.activeUploads.delete(fileKey);
-}
-
-
-
-//////
-
-
-
-    onError: (error) => {
-      this.handleUploadError(fileKey, file.name, file.size, error);
-    },
-    onProgress: (bytesUploaded, bytesTotal) => {
-      this.handleUploadProgress(fileKey, file.name, bytesUploaded, bytesTotal);
-    },
-    onSuccess: () => {
-      this.handleUploadSuccess(fileKey, file.name, file.size);
-    }
-
-
-
-
-
-
-
-    /////////
-
-
-    describe('handleUploadError', () => {
-  it('should update fileProgress with error status', () => {
+describe('clearQuestionFiles', () => {
+  it('should remove all files for the specified question', () => {
     // Arrange
-    const fileKey = 'question1-test.txt-0';
-    const fileName = 'test.txt';
-    const fileSize = 100;
-    const error = { message: 'Network error' };
+    const file1 = new File(['content1'], 'file1.txt');
+    const file2 = new File(['content2'], 'file2.txt');
+    const file3 = new File(['content3'], 'file3.txt');
+    
+    (service as any)._storedFiles.set([
+      { file: file1, questionName: 'question1', previewUrl: 'blob:url1' },
+      { file: file2, questionName: 'question1', previewUrl: 'blob:url2' },
+      { file: file3, questionName: 'question2', previewUrl: 'blob:url3' }
+    ]);
 
     // Act
-    service.handleUploadError(fileKey, fileName, fileSize, error);
+    service.clearQuestionFiles('question1');
 
     // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.status).toBe('error');
-    expect(progress?.error).toBe('Network error');
-    expect(progress?.bytesUploaded).toBe(0);
-    expect(progress?.bytesTotal).toBe(fileSize);
-    expect(progress?.percentage).toBe(0);
+    expect(service.storedFiles().length).toBe(1);
+    expect(service.storedFiles()[0].questionName).toBe('question2');
   });
 
-  it('should use default error message when error.message is undefined', () => {
+  it('should revoke object URLs for removed files', () => {
     // Arrange
-    const fileKey = 'question1-test.txt-0';
+    const file1 = new File(['content1'], 'file1.txt');
+    const file2 = new File(['content2'], 'file2.txt');
+    
+    (service as any)._storedFiles.set([
+      { file: file1, questionName: 'question1', previewUrl: 'blob:url1' },
+      { file: file2, questionName: 'question1', previewUrl: 'blob:url2' }
+    ]);
+    
+    spyOn(URL, 'revokeObjectURL');
 
     // Act
-    service.handleUploadError(fileKey, 'test.txt', 100, {});
+    service.clearQuestionFiles('question1');
 
     // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.error).toBe('Upload failed');
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:url1');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:url2');
   });
 
-  it('should use default error message when error is null', () => {
+  it('should not revoke URL when previewUrl is undefined', () => {
     // Arrange
-    const fileKey = 'question1-test.txt-0';
+    const file1 = new File(['content1'], 'file1.txt');
+    
+    (service as any)._storedFiles.set([
+      { file: file1, questionName: 'question1', previewUrl: undefined }
+    ]);
+    
+    spyOn(URL, 'revokeObjectURL');
 
     // Act
-    service.handleUploadError(fileKey, 'test.txt', 100, null);
+    service.clearQuestionFiles('question1');
 
     // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.error).toBe('Upload failed');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
-  it('should remove from activeUploads', () => {
+  it('should not revoke URL when previewUrl is null', () => {
     // Arrange
-    const fileKey = 'question1-test.txt-0';
-    const mockUpload = { abort: jasmine.createSpy('abort') };
-    (service as any).activeUploads.set(fileKey, mockUpload);
+    const file1 = new File(['content1'], 'file1.txt');
+    
+    (service as any)._storedFiles.set([
+      { file: file1, questionName: 'question1', previewUrl: null }
+    ]);
+    
+    spyOn(URL, 'revokeObjectURL');
 
     // Act
-    service.handleUploadError(fileKey, 'test.txt', 100, { message: 'error' });
+    service.clearQuestionFiles('question1');
 
     // Assert
-    expect((service as any).activeUploads.has(fileKey)).toBeFalse();
-  });
-});
-
-describe('handleUploadProgress', () => {
-  it('should update fileProgress with current progress', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-    const fileName = 'test.txt';
-
-    // Act
-    service.handleUploadProgress(fileKey, fileName, 50, 100);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.status).toBe('uploading');
-    expect(progress?.bytesUploaded).toBe(50);
-    expect(progress?.bytesTotal).toBe(100);
-    expect(progress?.percentage).toBe(50);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
-  it('should calculate percentage correctly', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-
-    // Act
-    service.handleUploadProgress(fileKey, 'test.txt', 75, 300);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.percentage).toBe(25);
-  });
-
-  it('should round percentage to nearest integer', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-
-    // Act
-    service.handleUploadProgress(fileKey, 'test.txt', 33, 100);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.percentage).toBe(33);
-  });
-
-  it('should handle 0 bytes uploaded', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-
-    // Act
-    service.handleUploadProgress(fileKey, 'test.txt', 0, 100);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.percentage).toBe(0);
-    expect(progress?.bytesUploaded).toBe(0);
-  });
-
-  it('should handle 100% progress', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-
-    // Act
-    service.handleUploadProgress(fileKey, 'test.txt', 100, 100);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.percentage).toBe(100);
-    expect(progress?.status).toBe('uploading'); // Still uploading until onSuccess
-  });
-});
-
-describe('handleUploadSuccess', () => {
-  it('should update fileProgress with complete status', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-    const fileName = 'test.txt';
-    const fileSize = 100;
-
-    // Act
-    service.handleUploadSuccess(fileKey, fileName, fileSize);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.status).toBe('complete');
-    expect(progress?.percentage).toBe(100);
-    expect(progress?.bytesUploaded).toBe(fileSize);
-    expect(progress?.bytesTotal).toBe(fileSize);
-  });
-
-  it('should remove from activeUploads', () => {
-    // Arrange
-    const fileKey = 'question1-test.txt-0';
-    const mockUpload = { abort: jasmine.createSpy('abort') };
-    (service as any).activeUploads.set(fileKey, mockUpload);
-
-    // Act
-    service.handleUploadSuccess(fileKey, 'test.txt', 100);
-
-    // Assert
-    expect((service as any).activeUploads.has(fileKey)).toBeFalse();
-  });
-
-  it('should handle large file sizes', () => {
-    // Arrange
-    const fileKey = 'question1-large.zip-0';
-    const fileSize = 500 * 1024 * 1024; // 500MB
-
-    // Act
-    service.handleUploadSuccess(fileKey, 'large.zip', fileSize);
-
-    // Assert
-    const progress = service.fileProgress().get(fileKey);
-    expect(progress?.bytesUploaded).toBe(fileSize);
-    expect(progress?.bytesTotal).toBe(fileSize);
-  });
-});
+  it('should not affect files from other questions', () => {
