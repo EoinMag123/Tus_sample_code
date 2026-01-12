@@ -330,4 +330,91 @@ describe('removeStoredFile', () => {
       expect(service.fileProgress().has('supportingDocuments-other.txt-1')).toBeTrue();
     });
   });
-});zxc
+});
+
+
+
+=====
+
+
+
+describe('hasActiveUploads', () => {
+  it('should return true when there are active uploads', () => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-test.txt-0', mockUpload);
+
+    // Act
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeTrue();
+  });
+
+  it('should return false when there are no active uploads', () => {
+    // Arrange
+    (service as any).activeUploads.clear();
+
+    // Act
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeFalse();
+  });
+
+  it('should return true with multiple active uploads', () => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-file1.txt-0', mockUpload);
+    (service as any).activeUploads.set('question1-file2.txt-1', mockUpload);
+    (service as any).activeUploads.set('question2-file3.txt-0', mockUpload);
+
+    // Act
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeTrue();
+    expect((service as any).activeUploads.size).toBe(3);
+  });
+
+  it('should return false after all uploads complete', () => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-test.txt-0', mockUpload);
+    
+    // Simulate upload completion
+    (service as any).activeUploads.delete('question1-test.txt-0');
+
+    // Act
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeFalse();
+  });
+
+  it('should return false after cancelAllUploads is called', () => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-test.txt-0', mockUpload);
+
+    // Act
+    service.cancelAllUploads();
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeFalse();
+  });
+
+  it('should return false after reset is called', () => {
+    // Arrange
+    const mockUpload = { abort: jasmine.createSpy('abort') };
+    (service as any).activeUploads.set('question1-test.txt-0', mockUpload);
+
+    // Act
+    service.reset();
+    const result = service.hasActiveUploads();
+
+    // Assert
+    expect(result).toBeFalse();
+  });
+});
