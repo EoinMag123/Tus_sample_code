@@ -44,77 +44,11 @@ namespace YourNamespace
                 $"[DocumentTracker] Tracked: {filename} for app {applicationId} ({state.CompletedUploads.Count}/{state.ExpectedCount})");
         }
 
-        /// <summary>
-        /// Register expected upload count for an application
-        /// </summary>
-        public void RegisterExpectedUploads(string applicationId, int expectedCount)
-        {
-            var state = _applicationUploads.GetOrAdd(applicationId, _ => new ApplicationUploadState());
-            state.ExpectedCount = expectedCount;
-            state.StartedAt = DateTime.UtcNow;
-            
-            System.Diagnostics.Debug.WriteLine(
-                $"[DocumentTracker] Registered {expectedCount} expected uploads for {applicationId}");
-        }
 
-        /// <summary>
-        /// Get all uploaded documents for an application
-        /// </summary>
-        public IEnumerable<UploadedDocument> GetUploadedDocuments(string applicationId)
-        {
-            if (_applicationUploads.TryGetValue(applicationId, out var state))
-            {
-                return state.CompletedUploads.ToArray();
-            }
-            return Enumerable.Empty<UploadedDocument>();
-        }
-
-        /// <summary>
-        /// Get upload count for an application
-        /// </summary>
-        public int GetUploadCount(string applicationId)
-        {
-            if (_applicationUploads.TryGetValue(applicationId, out var state))
-            {
-                return state.CompletedUploads.Count;
-            }
-            return 0;
-        }
-
-        /// <summary>
-        /// Get expected upload count
-        /// </summary>
-        public int GetExpectedCount(string applicationId)
-        {
-            if (_applicationUploads.TryGetValue(applicationId, out var state))
-            {
-                return state.ExpectedCount;
-            }
-            return 0;
-        }
-
-        /// <summary>
-        /// Check if all expected uploads are complete
-        /// </summary>
-        public bool AreAllUploadsComplete(string applicationId)
-        {
-            if (_applicationUploads.TryGetValue(applicationId, out var state))
-            {
-                return state.ExpectedCount > 0 && state.CompletedUploads.Count >= state.ExpectedCount;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Clear tracking data for an application
-        /// </summary>
-        public void ClearApplicationUploads(string applicationId)
-        {
-            _applicationUploads.TryRemove(applicationId, out _);
-        }
+       
     }
 
-    public class ApplicationUploadState
+    public class DoucmentUploadState
     {
         public int ExpectedCount { get; set; }
         public ConcurrentBag<UploadedDocument> CompletedUploads { get; } = new ConcurrentBag<UploadedDocument>();
