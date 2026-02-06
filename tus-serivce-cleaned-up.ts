@@ -194,17 +194,7 @@ export class SurveyTusUploadService {
       );
     });
 
-    // Remove from progress tracking
-    this._fileProgress.update(current => {
-      const newMap = new Map(current);
-      for (const [key] of newMap) {
-        if (key.includes(fileName) && key.includes(questionName)) {
-          newMap.delete(key);
-          break;
-        }
-      }
-      return newMap;
-    });
+   
 
     callback('success', null);
   }

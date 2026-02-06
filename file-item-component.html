@@ -1,0 +1,48 @@
+<div [className]="question.cssClasses.preview">
+  <!-- Don't show image preview for server files to avoid triggering download -->
+  <div *ngIf="!isServerFile && question.allowImagesPreview && item.content" 
+       [className]="question.cssClasses.imageWrapper">
+    <img 
+      [src]="item.content" 
+      [style.height]="question.imageHeight" 
+      [style.width]="question.imageWidth"
+      [alt]="item.name"
+      [className]="question.cssClasses.image"
+    />
+  </div>
+
+  <!-- File info and download link -->
+  <div [className]="question.cssClasses.fileSignBottom">
+    <!-- Clickable file name that triggers download -->
+    <a 
+      href="#" 
+      [className]="question.cssClasses.fileSign"
+      (click)="downloadFile($event)"
+      [title]="'Click to download ' + fileName"
+    >
+      <sv-ng-svg-icon
+        [iconName]="question.cssClasses.fileSignIcon"
+        [size]="'auto'"
+        [className]="question.cssClasses.fileIcon"
+      ></sv-ng-svg-icon>
+      <span>{{ fileName }}</span>
+    </a>
+
+    <!-- Remove button -->
+    <button
+      *ngIf="canRemove"
+      type="button"
+      [className]="question.getRemoveButtonCss()"
+      [title]="question.removeFileTitle"
+      (click)="removeFile($event)"
+    >
+      <span [className]="question.cssClasses.removeFileButton">×</span>
+      <sv-ng-svg-icon
+        *ngIf="question.cssClasses.removeFileSvgIcon"
+        [iconName]="question.cssClasses.removeFileSvgIcon"
+        [title]="question.removeFileTitle"
+        [size]="'auto'"
+      ></sv-ng-svg-icon>
+    </button>
+  </div>
+</div>
